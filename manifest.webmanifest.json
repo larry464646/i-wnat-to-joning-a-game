@@ -1,0 +1,14 @@
+{
+  "background_color": "#101522",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "迷你倖存者",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "迷你倖存者",
+  "start_url": "/",
+  "theme_color": "#70e0a2",
+  "id": "mini-survivor",
+  "description": "一款自動攻擊、閃避敵人、升級技能的生存冒險遊戲。",
+  "lang": "zh"
+}
