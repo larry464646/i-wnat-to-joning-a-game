@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>迷你倖存者 v1</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101522;color:#fff;font-family:system-ui,"Noto Sans TC",sans-serif;touch-action:none}
+#game{display:block;width:100vw;height:100dvh;background:#172234}
+.hud{position:fixed;top:10px;left:10px;right:10px;display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none;font-size:13px;text-shadow:0 2px 4px #000}
+.panel{background:#101522d9;border:1px solid #ffffff25;border-radius:12px;padding:8px 10px;min-width:92px}
+.bar{height:7px;background:#394456;border-radius:9px;overflow:hidden;margin-top:5px}.fill{height:100%;width:100%;background:#54df9a}
+#xpfill{background:#62b6ff}#hint{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);white-space:nowrap;background:#101522b8;padding:8px 12px;border-radius:99px;font-size:12px;color:#dce7f8;pointer-events:none}
+#overlay{position:fixed;inset:0;background:#070b13d9;display:none;align-items:center;justify-content:center;padding:18px}
+.modal{width:min(520px,100%);background:#1a2436;border:1px solid #ffffff25;border-radius:20px;padding:20px;box-shadow:0 20px 80px #0008}
+.modal h1{font-size:24px;margin:0 0 8px}.modal p{color:#c2cde0;line-height:1.5}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.card{background:#26354c;color:#fff;border:1px solid #ffffff24;border-radius:14px;padding:13px 10px;text-align:left;min-height:120px;font:inherit}
+.card b{display:block;margin-bottom:8px;color:#91d4ff}.card:active{transform:scale(.98);background:#354b69}
+.action{border:0;border-radius:12px;padding:12px 16px;background:#6be0a2;color:#102018;font-weight:800;font-size:15px}
+@media(max-width:520px){.cards{grid-template-columns:1fr}.card{min-height:70px}.modal{padding:16px}.modal h1{font-size:21px}}
+</style></head><body>
+<canvas id="game"></canvas>
+<div class="hud">
+ <div class="panel"><b>❤️ 生命</b><div class="bar"><div id="hpfill" class="fill"></div></div><small id="hptext">100 / 100</small></div>
+ <div class="panel"><b>⭐ 等級 <span id="level">1</span></b><div class="bar"><div id="xpfill" class="fill" style="width:0%"></div></div><small id="xptext">0 / 5 經驗</small></div>
+ <div class="panel"><b>⏱ <span id="time">00:00</span></b><br><small>擊敗 <span id="kills">0</span></small></div>
+</div>
+<div id="hint">拖曳螢幕移動 · 角色會自動攻擊最近的敵人</div>
+<div id="overlay"><div class="modal" id="modal"></div></div>
+<script>
+(()=> {
+const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d');
+let W=innerWidth,H=innerHeight,dpr=1;
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+const $=id=>document.getElementById(id);
+let player,enemies,shots,orbs,particles,keys={},pointer=null,last=0,spawn=0,fire=0,elapsed=0,kills=0,level=1,xp=0,xpNeed=5,hp=100,maxHp=100,damage=22,rate=.55,moveSpeed=190,shotSpeed=420,running=false,paused=false,gameOver=false;
+function reset(){player={x:0,y:0,r:13};enemies=[];shots=[];orbs=[];particles=[];spawn=0;fire=0;elapsed=0;kills=0;level=1;xp=0;xpNeed=5;hp=maxHp=100;damage=22;rate=.55;moveSpeed=190;shotSpeed=420;gameOver=false;paused=false;running=true;$('overlay').style.display='none';updateHud()}
+function updateHud(){$('hpfill').style.width=(hp/maxHp*100)+'%';$('hptext').textContent=Math.ceil(hp)+' / '+maxHp;$('level').textContent=level;$('xpfill').style.width=(xp/xpNeed*100)+'%';$('xptext').textContent=xp+' / '+xpNeed+' 經驗';$('kills').textContent=kills;$('time').textContent=String(Math.floor(elapsed/60)).padStart(2,'0')+':'+String(Math.floor(elapsed%60)).padStart(2,'0')}
+function rand(a,b){return a+Math.random()*(b-a)}
+function spawnEnemy(){let a=rand(0,Math.PI*2),dist=Math.max(W,H)*.62+rand(40,140);enemies.push({x:player.x+Math.cos(a)*dist,y:player.y+Math.sin(a)*dist,r:rand(10,16),hp:30+elapsed*.75,speed:rand(35,62)+Math.min(elapsed*.25,25),hit:0})}
+function nearest(){let best=null,bd=Infinity;for(const e of enemies){let d=(e.x-player.x)**2+(e.y-player.y)**2;if(d<bd){bd=d;best=e}}return best}
+function levelUp(){paused=true;const choices=[
+ {name:'強力攻擊',desc:'每次攻擊傷害 +35%',apply:()=>damage=Math.round(damage*1.35)},
+ {name:'快速連射',desc:'攻擊速度提升 25%',apply:()=>rate=Math.max(.18,rate*.75)},
+ {name:'疾風步',desc:'移動速度 +20%',apply:()=>moveSpeed*=1.2},
+ {name:'生命恢復',desc:'恢復 35 點生命，上限 +10',apply:()=>{maxHp+=10;hp=Math.min(maxHp,hp+35)}},
+ {name:'穿透彈',desc:'子彈速度 +30%',apply:()=>shotSpeed*=1.3}
+ ];
+ let pool=[...choices].sort(()=>Math.random()-.5).slice(0,3);
+ $('modal').innerHTML='<h1>✨ 升級！</h1><p>選擇一項能力，繼續生存。</p><div class="cards">'+pool.map((c,i)=>`<button class="card" data-i="${i}"><b>${c.name}</b>${c.desc}</button>`).join('')+'</div>';
+ $('overlay').style.display='flex';$('overlay').querySelectorAll('button').forEach((b)=>b.onclick=()=>{pool[+b.dataset.i].apply();level++;xp-=xpNeed;xpNeed=Math.ceil(xpNeed*1.35+1);paused=false;$('overlay').style.display='none';updateHud();if(xp>=xpNeed)levelUp()});}
+function endGame(){paused=true;gameOver=true;$('modal').innerHTML=`<h1>冒險結束</h1><p>你生存了 ${Math.floor(elapsed)} 秒，擊敗 ${kills} 隻敵人，達到等級 ${level}。</p><button class="action" id="again">再玩一次</button>`;$('overlay').style.display='flex';$('again').onclick=reset}
+function fireShot(){let e=nearest();if(!e)return;let dx=e.x-player.x,dy=e.y-player.y,len=Math.hypot(dx,dy)||1;shots.push({x:player.x,y:player.y,vx:dx/len*shotSpeed,vy:dy/len*shotSpeed,r:5,life:1.8,damage})}
+function addOrb(x,y){orbs.push({x,y,r:5})}
+function update(dt){if(!running||paused)return;elapsed+=dt;spawn+=dt;fire+=dt;if(spawn>.75){spawn=0;spawnEnemy();if(elapsed>60&&Math.random()<.3)spawnEnemy()}if(fire>=rate){fire=0;fireShot()}
+ let dx=0,dy=0;if(keys.ArrowLeft||keys.a)dx--;if(keys.ArrowRight||keys.d)dx++;if(keys.ArrowUp||keys.w)dy--;if(keys.ArrowDown||keys.s)dy++;
+ if(pointer){let px=pointer.x-W/2,py=pointer.y-H/2,l=Math.hypot(px,py);if(l>12){dx=px/l;dy=py/l}}
+ let l=Math.hypot(dx,dy);if(l){player.x+=dx/l*moveSpeed*dt;player.y+=dy/l*moveSpeed*dt}
+ for(let e of enemies){let vx=player.x-e.x,vy=player.y-e.y,d=Math.hypot(vx,vy)||1;e.x+=vx/d*e.speed*dt;e.y+=vy/d*e.speed*dt;if(d<e.r+player.r&&e.hit<=0){hp-=10;e.hit=.65;if(hp<=0){hp=0;updateHud();endGame();return}}e.hit-=dt}
+ for(let s of shots){s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt;for(let e of enemies){if(!e.dead&&Math.hypot(s.x-e.x,s.y-e.y)<s.r+e.r){e.hp-=s.damage;s.life=0;if(e.hp<=0){e.dead=true;kills++;addOrb(e.x,e.y)}break}}}
+ shots=shots.filter(s=>s.life>0);enemies=enemies.filter(e=>!e.dead);for(let o of orbs){let d=Math.hypot(o.x-player.x,o.y-player.y);if(d<player.r+o.r+5){o.dead=true;xp++;if(xp>=xpNeed){levelUp();break}}}orbs=orbs.filter(o=>!o.dead);updateHud()}
+function draw(){ctx.clearRect(0,0,W,H);ctx.fillStyle='#172234';ctx.fillRect(0,0,W,H);
+ const camX=player?player.x:0,camY=player?player.y:0;ctx.strokeStyle='#26344a';ctx.lineWidth=1;let grid=48,ox=((W/2-camX)%grid+grid)%grid,oy=((H/2-camY)%grid+grid)%grid;for(let x=ox;x<W;x+=grid){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}for(let y=oy;y<H;y+=grid){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ const sx=x=>x-camX+W/2,sy=y=>y-camY+H/2;
+ for(const o of orbs){ctx.fillStyle='#73d6ff';ctx.beginPath();ctx.arc(sx(o.x),sy(o.y),o.r,0,7);ctx.fill();ctx.strokeStyle='#c7f2ff';ctx.stroke()}
+ for(const s of shots){ctx.fillStyle='#ffe27a';ctx.beginPath();ctx.arc(sx(s.x),sy(s.y),s.r,0,7);ctx.fill()}
+ for(const e of enemies){let x=sx(e.x),y=sy(e.y);if(x<-40||x>W+40||y<-40||y>H+40)continue;ctx.fillStyle='#f26f7d';ctx.beginPath();ctx.arc(x,y,e.r,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x-e.r*.3,y-e.r*.15,2.2,0,7);ctx.arc(x+e.r*.3,y-e.r*.15,2.2,0,7);ctx.fill();ctx.fillStyle='#7b273b';ctx.fillRect(x-e.r,y-e.r-7,e.r*2,3);ctx.fillStyle='#ff8792';ctx.fillRect(x-e.r,y-e.r-7,e.r*2*Math.max(0,e.hp/(30+elapsed*.75)),3)}
+ if(player){let x=W/2,y=H/2;ctx.fillStyle='#70e0a2';ctx.beginPath();ctx.arc(x,y,player.r+4,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x-4,y-2,2.5,0,7);ctx.arc(x+4,y-2,2.5,0,7);ctx.fill();ctx.fillStyle='#193e38';ctx.beginPath();ctx.arc(x,y+4,3,0,7);ctx.fill()}
+}
+let lastFrame=0;function loop(t){let dt=Math.min((t-lastFrame)/1000||0,.04);lastFrame=t;update(dt);draw();requestAnimationFrame(loop)}
+addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault()});addEventListener('keyup',e=>keys[e.key]=false);
+function point(e){return {x:e.clientX,y:e.clientY}}canvas.addEventListener('pointerdown',e=>{pointer=point(e);canvas.setPointerCapture(e.pointerId)});canvas.addEventListener('pointermove',e=>{if(pointer)pointer=point(e)});canvas.addEventListener('pointerup',()=>pointer=null);canvas.addEventListener('pointercancel',()=>pointer=null);
+reset();requestAnimationFrame(loop);
+})();
+</script></body></html>
